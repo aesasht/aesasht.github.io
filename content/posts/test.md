@@ -4,4 +4,4 @@ draft: false
 title: 'Test'
 ---
 
-![image-20250313185453593](.\assets\image-20250313185453593.png)
+![image-20250313185453593](..\..\assets\image-20250313185453593.png)
