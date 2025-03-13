@@ -1,5 +1,14 @@
 baseURL: https://aesasht.github.io/
 languageCode: en-us
 title: Aesash
-
 theme: [PaperMod]
+
+params:
+  homeInfoParams:
+      Title: "😘Here, The World!!!"
+      Content: >
+        Welcome to Aesash's Site!
+  socialIcons:
+    - name: github
+      title: view my github page
+      url: "https://github.com/aesasht"
