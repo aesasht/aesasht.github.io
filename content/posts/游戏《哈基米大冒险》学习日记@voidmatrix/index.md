@@ -200,6 +200,137 @@ void on_hello(const httplib::Request& req, httplib::Response& res)
 
 ## 服务端程序开发
 
+这是程序头
+
+```
+#include "../thirdparty/httplib.h"
+
+#include <mutex>
+#include <string>
+#include <fstream>
+std::mutex g_mutex;			// 全局互斥锁
+std::string str_text;		// 文本内容
+int progress_1 = -1;		// 玩家1进度
+int progress_2 = -1;		// 玩家2进度
+```
+
+根据玩法设计，我们首先需要读取预设好的文本数据
+
+```c++
+int main(int argc, char** argv)
+{
+    /*读入文本内容*/
+    std::ifstream file("text.txt");
+
+    if (!file.good())
+    {
+        MessageBox(nullptr, L"无法打开文件 text.txt", L"启动失败", MB_OK | MB_ICONERROR);
+        return -1;
+    }
+
+    std::stringstream str_stream;
+    str_stream << file.rdbuf();
+    str_text = str_stream.str();
+
+    file.close();
+    
+    ......
+}
+```
+
+接下来是通讯部分，首先初始化httplib里提供的服务器对象：
+
+```c++
+httplib::Server server;
+```
+
+负责响应用户登入请求：
+
+```C++
+/* 用户登入 */
+server.Post("/login", [&](const httplib::Request& req, httplib::Response& res) {
+
+	std::lock_guard<std::mutex> lock(g_mutex);
+	// 多余用户登入返回-1并忽略
+	if (progress_1 >= 0 && progress_2 >= 0)
+	{
+        // "text/plain" 是 HTTP 协议中表示“纯文本内容”的标准标识。
+		res.set_content("-1", "text/plain");	
+		return;
+	}
+
+	// 返回登入的id
+	res.set_content(progress_1 >= 0 ? "2" : "1", "text/plain");
+	// 用户登入标识
+	if (progress_1 >= 0) {
+		progress_2 = 0;
+	}
+	else {
+		progress_1 = 0;
+	}
+});
+```
+
+返回游戏所需的文本文件：
+
+```c++
+/*返回游戏所需的文本文件*/
+server.Post("/query_text", [&](const httplib::Request& req, httplib::Response& res) {
+	res.set_content(str_text, "text/plain");
+});
+```
+
+最后是最重要的同步部分代码——完成世界状态的同步：
+
+```c++
+/*世界状态的同步*/
+server.Post("/update_1", [&](const httplib::Request& req, httplib::Response& res) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    // 玩家1客户端返回当前用户的打字数，服务端将其保存在本地变量progress_1中
+    progress_1 = std::stoi(req.body);
+    // 在响应体中告知玩家2当前的进度，从而实现世界状态的复制。
+    res.set_content(std::to_string(progress_2), "text/plain");
+    });
+
+server.Post("/update_2", [&](const httplib::Request& req, httplib::Response& res) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+	// 玩家2客户端返回当前用户的打字数，服务端将其保存在本地变量progress_2中
+    progress_2 = std::stoi(req.body);
+ 	// 在响应体中告知玩家1当前的进度，从而实现世界状态的复制。
+    res.set_content(std::to_string(progress_1), "text/plain");
+});
+```
+
+设置服务器监听端口
+```c++
+server.listen("0.0.0.0", 25565);
+/*
+0.0.0.0是一个特殊的IP地址，表示“所有可用的网络接口”。
+当一个网络服务监听在 0.0.0.0 上时，它可以接受来自任何网络接口上的连接。
+通常用于服务器配置，以允许服务接受所有网络接口上的连接请求。
+*/
+```
+
+## 客户端基础架构搭建
+
+基础框架就是voidmatrix前几期讲的几个复用代码：
+
+![image-20250316002659108](index.assets/image-20250316002659108.png)
+
+* `Animation.h`这个头文件里实现了动画播放器
+* `atlas.h` 这个实现了图集，方便图像资源的管理
+* `camera.h`这个实现了摄像系统
+* `timer.h`这个实现了计时器系统
+* `util.h`这个则是工具类
+* `vector2.h`这个是游戏开发经常用到的二维向量类
+
+# 玩家路径查询与帧间平滑插值移动
+
+## Path类的设计
+
+## 插值 & 平滑
+
 
 
 # Q & A
@@ -471,3 +602,105 @@ void on_hello(const httplib::Request& req, httplib::Response& res)
 >
 > ### **总结**
 > C++ 的 Lambda 表达式通过简洁的语法实现了灵活的函数对象定义，适用于需要临时逻辑的场景（如 STL 算法、回调等）。理解捕获方式、`mutable` 和返回类型是掌握其用法的关键。
+
+## 服务端代码
+
+```c++
+#include "../thirdparty/httplib.h"
+
+#include <mutex>
+#include <string>
+#include <fstream>
+
+std::mutex g_mutex;			// 全局互斥锁
+
+std::string str_text;		// 文本内容
+
+int progress_1 = -1;		// 玩家1进度
+int progress_2 = -1;		// 玩家2进度
+
+int main(int argc, char** argv)
+{
+	//httplib::Server server;
+
+	//server.Post("/hello", on_hello);
+
+	//server.listen("localhost", 25565);
+	
+	/*读入文本内容*/
+	std::ifstream file("text.txt");
+
+	if (!file.good())
+	{
+		MessageBox(nullptr, L"无法打开文件 text.txt", L"启动失败", MB_OK | MB_ICONERROR);
+		return -1;
+	}
+
+	std::stringstream str_stream;
+	str_stream << file.rdbuf();
+	str_text = str_stream.str();
+
+	file.close();
+
+	httplib::Server server;
+
+	/* 用户登入 */
+	server.Post("/login", [&](const httplib::Request& req, httplib::Response& res) {
+
+		std::lock_guard<std::mutex> lock(g_mutex);
+		// 多余用户登入返回-1并忽略
+		if (progress_1 >= 0 && progress_2 >= 0)
+		{
+			res.set_content("-1", "text/plain");	// "text/plain" 是 HTTP 协议中表示“纯文本内容”的标准标识。
+			return;
+		}
+
+		// 返回登入的id
+		res.set_content(progress_1 >= 0 ? "2" : "1", "text/plain");
+		// 用户登入标识
+		if (progress_1 >= 0) {
+			progress_2 = 0;
+		}
+		else {
+			progress_1 = 0;
+		}
+	});
+
+
+	/*返回游戏所需的文本文件*/
+	server.Post("/query_text", [&](const httplib::Request& req, httplib::Response& res) {
+		res.set_content(str_text, "text/plain");
+	});
+
+	/*世界状态的同步*/
+	server.Post("/update_1", [&](const httplib::Request& req, httplib::Response& res) {
+		std::lock_guard<std::mutex> lock(g_mutex);
+
+		// 玩家1客户端返回当前用户的打字数，服务端将其保存在本地变量progress_1中
+		progress_1 = std::stoi(req.body);
+		// 在响应体中告知玩家2当前的进度，从而实现世界状态的复制。
+		res.set_content(std::to_string(progress_2), "text/plain");
+
+	});
+
+	server.Post("/update_2", [&](const httplib::Request& req, httplib::Response& res) {
+		std::lock_guard<std::mutex> lock(g_mutex);
+
+		progress_2 = std::stoi(req.body);
+
+		res.set_content(std::to_string(progress_1), "text/plain");
+	});
+
+	/*监听0.0.0.0*/
+	server.listen("0.0.0.0", 25565);
+
+	/*
+	0.0.0.0是一个特殊的IP地址，表示“所有可用的网络接口”。
+	当一个网络服务监听在 0.0.0.0 上时，它可以接受来自任何网络接口上的连接。
+	通常用于服务器配置，以允许服务接受所有网络接口上的连接请求。
+	*/
+
+	return 0;
+} 
+```
+
