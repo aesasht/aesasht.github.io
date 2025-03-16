@@ -327,9 +327,284 @@ server.listen("0.0.0.0", 25565);
 
 # 玩家路径查询与帧间平滑插值移动
 
+按照游戏玩法，每当我们敲下正确的字符，游戏角色就会向前平移一段距离。如果我们不进行**平滑处理**，角色的移动将会在一瞬间完成。游戏画面上会带来一顿一顿的观感。在游戏开发中，平滑处理显得尤为重要。
+
+如何平滑？从起始帧，平滑的向着目标位置移动，而这个移动的过程可能会跨越多个渲染帧。
+
 ## Path类的设计
 
-## 插值 & 平滑
+玩家地图如下图所示，右边是构成路径顶点的坐标。我们首先应该要做的是，在给定任意游戏进度（打字文本完成度）的情况下，都能得到地图上对应的坐标位置——也就是说要完成游戏进度到地图坐标的映射。
+
+![image-20250316111356409](index.assets/image-20250316111356409.png)
+
+
+
+Path类的作用是给定游戏进度得出坐标位置。具体看代码：
+
+```cpp
+class Path
+{
+public:
+	Path(const std::vector<Vector2>& point_list)
+	{
+		this->point_list = point_list;
+
+		for (size_t i = 1; i < point_list.size(); ++i)
+		{
+			float segment_len =
+                (point_list[i] - point_list[i - 1]).length();
+			segment_len_list.push_back(segment_len);
+			total_length += segment_len;
+		}
+
+	}
+	~Path() = default;
+	Vector2 get_position_at_progress(float progress) const
+	{
+        /*边界条件判断*/
+		if (progress <= 0) return point_list.front();
+		if (progress >= 1) return point_list.back();
+
+		float target_distance = total_length * progress;
+
+		float accumulated_len = 0.0f;
+		for (size_t i = 1; i < point_list.size(); ++i)
+		{
+			accumulated_len += segment_len_list[i - 1];
+			if (accumulated_len >= target_distance)
+			{
+				float segment_progress = 
+                    (target_distance - (accumulated_len - segment_len_list[i - 1])) 
+                    		/ segment_len_list[i - 1];
+				
+				return point_list[i - 1] + 
+                    (point_list[i] - point_list[i - 1]) * segment_progress;
+			}
+		}
+
+		return point_list.back(); 
+	}
+
+private:
+	float total_length = 0;
+	std::vector<Vector2> point_list;
+	std::vector<float> segment_len_list;
+};
+```
+
+构造函数的作用是读取节点坐标，并计算各段路的长度和总长度。
+
+在`get_position_at_progress(float progress)`这个函数里，将会根据游戏进度得出坐标位置。
+
+## Player类与平滑
+
+Player类的整体框架如下所示
+
+```c++
+class Player{
+public:
+	/* 枚举正面朝向 */
+	enum class Facing
+	{
+		Up, Down, Left, Right
+	};
+public:
+    Player(Atlas* atlas_idle_up, Atlas* atlas_idle_down, 
+           Atlas* atlas_idle_left, Atlas* atlas_idle_right,
+			Atlas* atlas_run_up, Atlas* atlas_run_down, 
+           Atlas* atlas_run_left, Atlas* atlas_run_right);
+    ~Player() = default;
+    void on_update(float delta);
+    void on_render(const Camera& camera);
+	void set_position(const Vector2& position);
+    const Vector2& get_position();
+    void set_target(const Vector2& pos_target);
+    
+private:
+	const float SPEED_RUN = 100.0f;
+private:
+	Vector2 position;
+	Vector2 velocity;
+	Vector2 pos_target;
+
+	Animation anim_idle_up;
+	Animation anim_idle_down;
+	Animation anim_idle_left;
+	Animation anim_idle_right;
+
+	Animation anim_run_up;
+	Animation anim_run_down;
+	Animation anim_run_left;
+	Animation anim_run_right;
+
+	Animation* current_anim = nullptr;
+
+	Facing facing = Facing::Down;
+    
+}
+```
+
+其中：
+
+构造函数负责初始化玩家类的动画资源：
+
+ ```c++
+ Player(Atlas* atlas_idle_up, Atlas* atlas_idle_down, Atlas* atlas_idle_left, Atlas* atlas_idle_right,
+ 	Atlas* atlas_run_up, Atlas* atlas_run_down, Atlas* atlas_run_left, Atlas* atlas_run_right)
+ {
+ 	anim_idle_up.set_loop(true);
+ 	anim_idle_up.set_interval(0.1f);
+ 	anim_idle_up.add_frame(atlas_idle_up);
+ 
+ 	anim_idle_down.set_loop(true);
+ 	anim_idle_down.set_interval(0.1f);
+ 	anim_idle_down.add_frame(atlas_idle_down);
+ 
+ 	anim_idle_left.set_loop(true);
+ 	anim_idle_left.set_interval(0.1f);
+ 	anim_idle_left.add_frame(atlas_idle_left);
+ 
+ 	anim_idle_right.set_loop(true);
+ 	anim_idle_right.set_interval(0.1f);
+ 	anim_idle_right.add_frame(atlas_idle_right);
+ 
+ 
+ 	anim_run_up.set_loop(true);
+ 	anim_run_up.set_interval(0.1f);
+ 	anim_run_up.add_frame(atlas_run_up);
+ 
+ 	anim_run_down.set_loop(true);
+ 	anim_run_down.set_interval(0.1f);
+ 	anim_run_down.add_frame(atlas_run_down);
+ 
+ 	anim_run_left.set_loop(true);
+ 	anim_run_left.set_interval(0.1f);
+ 	anim_run_left.add_frame(atlas_run_left);
+ 
+ 	anim_run_right.set_loop(true);
+ 	anim_run_right.set_interval(0.1f);
+ 	anim_run_right.add_frame(atlas_run_right);
+ }
+ ```
+
+`on_update`则是负责玩家动画更新逻辑，是“重头戏”
+
+```c++
+void on_update(float delta)
+{
+	/* 玩家位置是否在目标位置处？ */
+	if (!position.approx(pos_target))
+		velocity = (pos_target - position).normalize() * SPEED_RUN;
+	else
+		velocity = Vector2(0, 0);
+	
+	/* 是否能超过目标位置 */
+	if ((pos_target - position).length() <= (velocity * delta).length())
+		position = pos_target;
+	else
+		position += velocity * delta;
+
+	if (velocity.approx(Vector2(0, 0)))
+	{
+		/*速度为零时的动画*/
+		switch (facing)
+		{
+		case Player::Facing::Up:	current_anim = &anim_idle_up;		 break;
+		case Player::Facing::Down:	current_anim = &anim_idle_down;		 break;
+		case Player::Facing::Left:	current_anim = &anim_idle_left;		 break;
+		case Player::Facing::Right:	current_anim = &anim_idle_right;	 break;
+		}
+	}
+	else
+	{
+		if (abs(velocity.y) >= 0.0001f)
+			facing = (velocity.y > 0) ? Player::Facing::Down : Player::Facing::Up;
+		if (abs(velocity.x) >= 0.0001f)
+			facing = (velocity.x > 0) ? Player::Facing::Left : Player::Facing::Right;
+
+		switch (facing)
+		{
+		case Player::Facing::Up:	current_anim = &anim_run_up;		 break;
+		case Player::Facing::Down:	current_anim = &anim_run_down;		 break;
+		case Player::Facing::Left:	current_anim = &anim_run_left;		 break;
+		case Player::Facing::Right:	current_anim = &anim_run_right;		 break;
+		}
+	}
+
+	if (!current_anim) return;
+	current_anim->set_position(position);
+	current_anim->on_update(delta);
+}
+```
+
+其中代码段
+
+```c++
+	/* 玩家位置是否在目标位置处？ */
+	if (!position.approx(pos_target))
+		velocity = (pos_target - position).normalize() * SPEED_RUN;
+	else
+		velocity = Vector2(0, 0);
+	
+	/* 是否能超过目标位置 */
+	if ((pos_target - position).length() <= (velocity * delta).length())
+		position = pos_target;
+	else
+		position += velocity * delta;		// 平滑
+```
+
+负责平滑操作。其原理在于将瞬间的移动分割成多帧进行。（问题，如果手速过快怎么办？答，再快每帧也只接收一个输入……）
+
+`on_render`函数负责渲染操作具体原理需要见voidmatrix前几期视频，代码如下：
+
+```c++
+void on_render(const Camera& camera)
+{
+	if (!current_anim) return;
+	current_anim->on_render(camera);
+}
+```
+
+剩下几个函数不再展开讨论。
+
+```c++
+void set_position(const Vector2& position)
+{
+	this->position = position;
+}
+
+const Vector2& get_position() const
+{
+	return position;
+}
+
+void set_target(const Vector2& pos_target)
+{
+	this->pos_target = pos_target;
+}
+```
+
+至此，完成了客户端基本框架的搭建。
+
+# 多线程网络通信与联机客户端开发
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
