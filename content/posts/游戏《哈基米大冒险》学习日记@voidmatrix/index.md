@@ -10,7 +10,7 @@ title: '游戏《哈基米大冒险》学习日记@voidmatrix'
 
 哈基米大冒险是一款联机打字游戏，教程来自B站Up主Voidmatrix。
 
-链接：【从零开始的C++游戏开发】联机初体验！从零开始速成C++联机游戏开发！| EasyX制作哈基米大冒险】 https://www.bilibili.com/video/BV1yjsoeREdZ/
+链接：【从零开始的C++游戏开发】联机初体验！从零开始速成C++联机游戏开发！| EasyX制作哈基米大冒险】 https://www.bilibili.com/video/BV1yjsoeREdZ/ 
 
 玩法上：两位玩家将分别扮演诗歌剧和东海帝王。在曲折的道路上比拼打字手速，先跑完的胜利。
 
