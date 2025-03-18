@@ -588,23 +588,537 @@ void set_target(const Vector2& pos_target)
 
 # 多线程网络通信与联机客户端开发
 
+让我们完成《哈基米大冒险！》的收尾工作。
+
+以下是全局变量们，由于游戏体量较小，所以全局变量较多。
+
+```c++
+// 游戏状态
+enum class Stage
+{
+	Waiting,		// 等待玩家加入
+	Ready,			// 准备起跑倒计时
+	Racing			// 正在比赛中
+};
+
+int val_count_down = 4;				// 起跑倒计时
+Stage stage = Stage::Waiting;		// 当前游戏状态
+
+int id_player = 0;					// 玩家序号
+/*
+atomic 原子操作——将变量的读写变为不可分割的原子操作
+*/
+std::atomic<int> progress_1 = -1;	// 玩家1进度
+std::atomic<int> progress_2 = -1;	// 玩家2进度
+int num_total_char = 0;				// 全部字符数
+
+Path path = Path(
+	{
+		{842, 842}, {1322, 842}, {1322, 442},
+		{2762, 442}, {2762, 842}, {3162, 842},
+		{3162, 1722}, {2122, 1722},{2122, 1562},
+		{842, 1562}, {842, 842}
+	}
+); // 角色移动路径对象
+
+int idx_line = 0;						// 当前文本行索引
+int idx_char = 0;						// 当前文本字符索引
+std::string str_text;					// 文本内容
+std::vector<std::string> str_line_list;	// 行文本内容
 
 
+//玩家图集
+Atlas atlas_1p_idle_up;
+Atlas atlas_1p_idle_down;
+Atlas atlas_1p_idle_left;
+Atlas atlas_1p_idle_right;
+
+Atlas atlas_1p_run_up;
+Atlas atlas_1p_run_down;
+Atlas atlas_1p_run_left;
+Atlas atlas_1p_run_right;
+
+Atlas atlas_2p_idle_up;
+Atlas atlas_2p_idle_down;
+Atlas atlas_2p_idle_left;
+Atlas atlas_2p_idle_right;
+
+Atlas atlas_2p_run_up;
+Atlas atlas_2p_run_down;
+Atlas atlas_2p_run_left;
+Atlas atlas_2p_run_right;
+
+IMAGE img_ui_1;				// 界面文本1
+IMAGE img_ui_2;				// 界面文本2
+IMAGE img_ui_3;				// 界面文本3
+IMAGE img_ui_fight;			// 界面文本FIGHT
+IMAGE img_ui_textbox;		// 界面文本框
+IMAGE img_background;		// 背景图
+
+std::string str_address;			// 服务器地址
+httplib::Client* client = nullptr;	// HTTP服务端对象
+```
+
+接下来是资源加载函数`load_resources`，没啥看头：
+
+```cpp
+void load_resources(HWND hwnd)
+{
+	// 字体资源
+	AddFontResourceEx(_T("resources/IPix.ttf"), FR_PRIVATE, NULL);
+	// 图集资源
+	atlas_1p_idle_up.load    (_T("resources/hajimi_idle_back_%d.png"), 4);
+	atlas_1p_idle_down.load  (_T("resources/hajimi_idle_front_%d.png"), 4);
+	atlas_1p_idle_left.load  (_T("resources/hajimi_idle_left_%d.png"), 4);
+	atlas_1p_idle_right.load (_T("resources/hajimi_idle_right_%d.png"), 4);
+
+	atlas_1p_run_up.load     (_T("resources/hajimi_run_back_%d.png"), 4);
+	atlas_1p_run_down.load   (_T("resources/hajimi_run_front_%d.png"), 4);
+	atlas_1p_run_left.load   (_T("resources/hajimi_run_left_%d.png"), 4);
+	atlas_1p_run_right.load  (_T("resources/hajimi_run_right_%d.png"), 4);
+
+	atlas_2p_idle_up.load    (_T("resources/manbo_idle_back_%d.png"), 4);
+	atlas_2p_idle_down.load  (_T("resources/manbo_idle_front_%d.png"), 4);
+	atlas_2p_idle_left.load  (_T("resources/manbo_idle_left_%d.png"), 4);
+	atlas_2p_idle_right.load (_T("resources/manbo_idle_right_%d.png"), 4);
+
+	atlas_2p_run_up.load     (_T("resources/manbo_run_back_%d.png"), 4);
+	atlas_2p_run_down.load   (_T("resources/manbo_run_front_%d.png"), 4);
+	atlas_2p_run_left.load   (_T("resources/manbo_run_left_%d.png"), 4);
+	atlas_2p_run_right.load  (_T("resources/manbo_run_right_%d.png"), 4);
+
+	// 单独的图片素材
+	loadimage(&img_ui_1, _T("resources/ui_1.png"));
+	loadimage(&img_ui_2, _T("resources/ui_2.png"));
+	loadimage(&img_ui_3, _T("resources/ui_3.png"));
+	loadimage(&img_ui_fight, _T("resources/ui_fight.png"));
+	loadimage(&img_ui_textbox, _T("resources/ui_textbox.png"));
+	loadimage(&img_background, _T("resources/background.png"));
+
+	//音频资源的加载
+	load_audio(_T("resources/bgm.mp3"), _T("bgm"));
+	load_audio(_T("resources/1p_win.mp3"), _T("1p_win"));
+	load_audio(_T("resources/2p_win.mp3"), _T("2p_win"));
+	load_audio(_T("resources/click_1.mp3"), _T("click_1"));
+	load_audio(_T("resources/click_2.mp3"), _T("click_2"));
+	load_audio(_T("resources/click_3.mp3"), _T("click_3"));
+	load_audio(_T("resources/click_4.mp3"), _T("click_4"));
+	load_audio(_T("resources/ui_1.mp3"), _T("ui_1"));
+	load_audio(_T("resources/ui_2.mp3"), _T("ui_2"));
+	load_audio(_T("resources/ui_3.mp3"), _T("ui_3"));
+	load_audio(_T("resources/ui_fright.mp3"), _T("ui_fright"));
+
+	std::ifstream file("config.cfg");
+
+	if (!file.good())
+	{
+		MessageBox(hwnd, L"无法打开配置 config.cfg", L"启动失败", MB_OK | MB_ICONERROR);
+		exit(-1);
+	}
+
+	std::stringstream str_stream;
+	str_stream << file.rdbuf();
+	str_address = str_stream.str();	// 读取配置的网络地址
+
+	file.close();
+}
+```
+
+重头戏来了，`login_to_server`。该函数将会建立服务器连接并每隔一段时间向服务器交换一次数据。
+
+看代码：
+
+```c++
+void login_to_server(HWND hwnd)
+{
+	client = new httplib::Client(str_address);
+	client->set_keep_alive(true); // 不断开底层TCP连接
+	httplib::Result result = client->Post("/login");
+	if (!result || result->status != 200)
+	{
+		MessageBox(hwnd, _T("无法连接服务器！"), _T("启动失败"), MB_OK | MB_ICONERROR);
+		exit(-1);
+	}
+	id_player = std::stoi(result->body);
+	if (id_player <= 0)
+	{
+		MessageBox(hwnd, _T("比赛已经开始了！"), _T("拒绝加入"), MB_OK | MB_ICONERROR);
+		exit(-1);
+	}
+    // 设置玩家id
+	(id_player == 1) ? (progress_1 = 0) : (progress_2 = 0);
+	...
+}
+```
+
+这段代码初始化httplib里的client对象并向服务器发送`/login`请求。之后会得到服务器返回的玩家id。
+
+如果无法连接服务器，那么将通过弹窗告知并结束程序。
+
+如果从服务器返回的玩家id小于或等于0，则表明房间已满，退出程序。
+
+如果以上两点均满足，则设置玩家id。
+
+接下来是向服务器请求游戏文本，同时将游戏文本分割成行存储在数组中。
+
+```c++
+void login_to_server(HWND hwnd)
+{
+	...
+
+	str_text = client->Post("/query_text")->body;
+	// 按行分割字符串
+	std::stringstream str_stream(str_text);
+	std::string str_line;
+	while (std::getline(str_stream, str_line))
+	{
+		str_line_list.push_back(str_line);
+		num_total_char += (int)str_line.length();
+	}
+	...
+}
+```
+
+接下来是数据同步进程：
+
+```c++
+void login_to_server(HWND hwnd)
+{
+	...
+	// 数据同步线程
+	std::thread([&]() {
+			while (true)
+			{
+				using namespace std::chrono;
+				std::string route = (id_player == 1) ? "/update_1" : "/update_2";
+				std::string body = std::to_string((id_player == 1) ? progress_1 : progress_2);
+				httplib::Result result = client->Post(route, body, "text/plain");
+
+				if (result && result->status == 200)
+				{
+					int progress = std::stoi(result->body);
+					(id_player == 1) ? (progress_2 = progress) : (progress_1 = progress);
+				}
+
+				std::this_thread::sleep_for(nanoseconds(1000000000 / 10));
+			}
+		}
+	).detach();//分离后，线程将与我们主线程并行执行
+}
+```
+
+该部分代码将会创建一个线程，定期与服务器交换数据。从而完成世界状态的同步。同步的时间，可以看做是”网络帧“的帧间隔。
+
+最后detach（）将会将该线程与主线程分离。
+
+## main函数与游戏逻辑
+
+### 处理数据初始化部分
+
+```c++
+int main(int argc, char** argv)
+{
+	
+	using namespace std::chrono;
+
+	HWND hwnd = initgraph(1280, 720/*, EW_ShOWCONSOLE*/);
+	SetWindowText(hwnd, _T("哈基米大冒险！@voidmatrix"));
+	settextstyle(28, 0, _T("Ipix"));
+
+	setbkmode(TRANSPARENT);	// Set background mode - TRANSPARENT
+
+	load_resources(hwnd);
+	login_to_server(hwnd);
+	/////////////// 处理数据初始化 ///////////////
+	ExMessage msg;
+	Timer timer_countdown;
+
+/*
+	界面中的文本框使用camera_ui进行渲染
+	跟随玩家移动的视野使用camera_scene渲染
+*/
+	Camera camera_ui, camera_scene;
+
+	Player player_1(
+
+		&atlas_1p_idle_up,
+		&atlas_1p_idle_down,
+		&atlas_1p_idle_left,
+		&atlas_1p_idle_right,
+
+		&atlas_1p_run_up,
+		&atlas_1p_run_down,
+		&atlas_1p_run_left,
+		&atlas_1p_run_right
+		);
+	Player player_2(
+
+		&atlas_2p_idle_up,
+		&atlas_2p_idle_down,
+		&atlas_2p_idle_left,
+		&atlas_2p_idle_right,
+
+		&atlas_2p_run_up,
+		&atlas_2p_run_down,
+		&atlas_2p_run_left,
+		&atlas_2p_run_right
+	);		   
+
+	camera_ui.set_size({ 1280, 720 });
+	camera_scene.set_size({ 1280, 720 });
+
+	player_1.set_position({ 842, 842 });
+	player_1.set_position({ 842, 842 });
+
+	// 初始化计时器
+	timer_countdown.set_one_shot(false);
+	timer_countdown.set_wait_time(1.0f);
+	timer_countdown.set_on_timeout([&]()
+		{
+			val_count_down--;
+
+			switch (val_count_down)
+			{
+			case 3: play_audio(_T("ui_3"));		break;
+			case 2: play_audio(_T("ui_2"));		break;
+			case 1: play_audio(_T("ui_1"));		break;
+			case 0: play_audio(_T("ui_fight"));	break;
+			case -1:
+				stage = Stage::Racing;
+				play_audio(_T("bgm"), true);
+				break;
+			}
+		});
+	// 控制帧率
+	const nanoseconds frame_duration(1000000000 / 144);
+	steady_clock::time_point last_tick = steady_clock::now();
+
+	BeginBatchDraw();
+
+	...
+	return 0;
+}
+```
+
+接下来是游戏主循环部分,框架如下：
+
+```c++
+while(ture)
+{
+    /////////////// 处理玩家输入 ///////////////
+    
+    /////////////// 处理游戏更新 ///////////////
+    
+    /////////////// 处理画面绘制 ///////////////
+    
+    FlushBatchDraw();
+    // 控制帧率
+    last_tick = frame_start;
+    nanoseconds sleep_duration = frame_duration- (steady_clock::now() - frame_start);
+    if (sleep_duration > nanoseconds(0))
+    std::this_thread::sleep_for(sleep_duration);
 
 
+}
+```
 
+在处理玩家输入部分，我们将检查玩家输入的字符是否正确，如果正确，则增加游戏进度。
 
+```c++
+/////////////// 处理玩家输入 ///////////////
+while (peekmessage(&msg))
+{
+    //如果不是游戏中，直接跳过
+    if (stage != Stage::Racing)
+        continue;
 
+    if (msg.message == WM_CHAR && idx_line < str_line_list.size())
+    {
+        const std::string& str_line = str_line_list[idx_line];
+        if (str_line[idx_char] == msg.ch)
+        {
+            switch (rand() % 4)
+            {
+                case 0: play_audio(_T("click_1")); break;
+                case 1: play_audio(_T("click_2")); break;
+                case 2: play_audio(_T("click_3")); break;
+                case 3: play_audio(_T("click_4")); break;
+            }
 
+            (id_player == 1) ? progress_1++ : progress_2++;
+            idx_char++;
+            if (idx_char >= str_line.length())
+            {
+                idx_char = 0;
+                idx_line++;
+            }
+        }
+    }
+}
+```
 
+在处理游戏逻辑更新部分中，我们设置了游戏输赢判断标准，编写了根据游戏进度（progress）来更新玩家和摄像机的位置：
 
+```c++
+/////////////// 处理游戏更新 ///////////////
 
+steady_clock::time_point frame_start = steady_clock::now();
+duration<float> delta = duration<float>(frame_start - last_tick);
 
+if (stage == Stage::Waiting)
+{
+	if (progress_1 >= 0 && progress_2 >= 0)
+	{
+		stage = Stage::Ready;
+	}
 
+}
+else
+{
+	if (stage == Stage::Ready)
+		timer_countdown.on_update(delta.count());
 
+	if ((id_player == 1 && progress_1 >= num_total_char) || (id_player == 2 && progress_2 >= num_total_char))
+	{
+		stop_audio(_T("bgm"));
+		play_audio((id_player == 1) ? _T("1p_win") : _T("2p_win"));
+		MessageBox(hwnd, _T("赢麻麻~"), _T("游戏结束"), MB_OK | MB_ICONINFORMATION);
+		exit(0);
+	}
+	else if ((id_player == 1 && progress_2 >= num_total_char) || (id_player == 1 && progress_2 >= num_total_char))
+	{
+		stop_audio(_T("bgm"));
+		MessageBox(hwnd, _T("输光光~"), _T("游戏结束"), MB_OK | MB_ICONINFORMATION);
+		exit(0);
+	}
 
+	player_1.set_target(path.get_position_at_progress((float)progress_1 / num_total_char));
+	player_2.set_target(path.get_position_at_progress((float)progress_2 / num_total_char));
 
+	player_1.on_update(delta.count());
+	player_2.on_update(delta.count());
 
+	camera_scene.look_at((id_player == 1) ? player_1.get_position() : player_2.get_position());
+}
+```
+
+值得注意的是，我们使用了两个camera对象，它们分别负责游戏场景和游戏ui的绘制。
+
+![image-20250317220251549](index.assets/image-20250317220251549.png)
+
+最后则是画面渲染部分，请看代码及其注释：
+
+```c++
+/////////////// 处理画面绘制 ///////////////
+setbkcolor(RGB(0, 0, 0));
+cleardevice();
+// 开始前界面绘制
+if (stage == Stage::Waiting)
+{
+    settextcolor(RGB(195, 195, 195));
+    outtextxy(15, 675, _T("比赛即将开始，等待其他玩家加入......"));
+}
+// 游戏开始后界面绘制
+else
+{
+    // 绘制背景图
+    static const Rect rect_bg =
+    {
+        0, 0, img_background.getwidth(), img_background.getheight()
+    };
+    putimage_ex(camera_scene, &img_background, &rect_bg);
+
+    //绘制玩家
+    if (player_1.get_position().y > player_2.get_position().y)
+    {
+        player_2.on_render(camera_scene);	//先画玩家2
+        player_1.on_render(camera_scene);	//再画玩家1
+    }
+    else
+    {
+        player_1.on_render(camera_scene);	//先画玩家1
+        player_2.on_render(camera_scene);	//再画玩家2
+    }
+
+    // 绘制倒计时
+    switch (val_count_down)
+    {
+        case 3:
+            {
+                static const Rect rect_ui_3 = {
+                    1280 / 2 - img_ui_3.getwidth() / 2,
+                    720 / 2 - img_ui_3.getheight() / 2,
+                    img_ui_3.getwidth(), img_ui_3.getheight()
+                };
+                putimage_ex(camera_ui, &img_ui_3, &rect_ui_3);
+                break;
+            }
+        case 2:
+            {
+                static const Rect rect_ui_2 = {
+                    1280 / 2 - img_ui_2.getwidth() / 2,
+                    720 / 2 - img_ui_2.getheight() / 2,
+                    img_ui_2.getwidth(), img_ui_2.getheight()
+                };
+                putimage_ex(camera_ui, &img_ui_2, &rect_ui_2);
+                break;
+            }
+        case 1:
+            {
+                static const Rect rect_ui_1 = {
+                    1280 / 2 - img_ui_1.getwidth() / 2,
+                    720 / 2 - img_ui_1.getheight() / 2,
+                    img_ui_1.getwidth(), img_ui_1.getheight()
+                };
+                putimage_ex(camera_ui, &img_ui_1, &rect_ui_1);
+                break;
+            }
+        case 0:
+            {
+                static const Rect rect_ui_fight = {
+                    1280 / 2 - img_ui_fight.getwidth() / 2,
+                    720 / 2 - img_ui_fight.getheight() / 2,
+                    img_ui_fight.getwidth(), img_ui_fight.getheight()
+                };
+                putimage_ex(camera_ui, &img_ui_3, &rect_ui_fight);
+                break;
+            }
+        default:
+            break;
+    }
+
+    // 绘制界面
+    if (stage == Stage::Racing)
+    {
+        static const Rect rect_textbox =
+        {
+            0, 
+            720 - img_ui_textbox.getheight(), 
+            img_ui_textbox.getwidth(), 
+            img_ui_textbox.getheight()
+        };
+
+        /* EasyX中使用的是宽字符字符串，而网络传输而来的字符串是utf-8编码并使用string存储的,
+				   所以这里需要用convert对象进行字符串的编码转换。
+				*/
+        static std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> convert;
+        std::wstring wstr_line = convert.from_bytes(str_line_list[idx_line]);
+        std::wstring wstr_completed = convert.from_bytes(str_line_list[idx_line].substr(0, idx_char));
+
+        putimage_ex(camera_ui, &img_ui_textbox, &rect_textbox);
+
+        // 构造视觉上多层次的字体
+        settextcolor(RGB(125, 125, 125));
+        outtextxy(185 + 2, rect_textbox.y + 65 + 2, wstr_line.c_str());
+        settextcolor(RGB(25,25,25));
+        outtextxy(185, rect_textbox.y + 65, wstr_line.c_str());
+        settextcolor(RGB(0, 149, 217));
+        outtextxy(185, rect_textbox.y + 65, wstr_completed.c_str());
+    }
+}
+```
+
+# 拓展方向
 
 
 
@@ -877,105 +1391,3 @@ void set_target(const Vector2& pos_target)
 >
 > ### **总结**
 > C++ 的 Lambda 表达式通过简洁的语法实现了灵活的函数对象定义，适用于需要临时逻辑的场景（如 STL 算法、回调等）。理解捕获方式、`mutable` 和返回类型是掌握其用法的关键。
-
-## 服务端代码
-
-```c++
-#include "../thirdparty/httplib.h"
-
-#include <mutex>
-#include <string>
-#include <fstream>
-
-std::mutex g_mutex;			// 全局互斥锁
-
-std::string str_text;		// 文本内容
-
-int progress_1 = -1;		// 玩家1进度
-int progress_2 = -1;		// 玩家2进度
-
-int main(int argc, char** argv)
-{
-	//httplib::Server server;
-
-	//server.Post("/hello", on_hello);
-
-	//server.listen("localhost", 25565);
-	
-	/*读入文本内容*/
-	std::ifstream file("text.txt");
-
-	if (!file.good())
-	{
-		MessageBox(nullptr, L"无法打开文件 text.txt", L"启动失败", MB_OK | MB_ICONERROR);
-		return -1;
-	}
-
-	std::stringstream str_stream;
-	str_stream << file.rdbuf();
-	str_text = str_stream.str();
-
-	file.close();
-
-	httplib::Server server;
-
-	/* 用户登入 */
-	server.Post("/login", [&](const httplib::Request& req, httplib::Response& res) {
-
-		std::lock_guard<std::mutex> lock(g_mutex);
-		// 多余用户登入返回-1并忽略
-		if (progress_1 >= 0 && progress_2 >= 0)
-		{
-			res.set_content("-1", "text/plain");	// "text/plain" 是 HTTP 协议中表示“纯文本内容”的标准标识。
-			return;
-		}
-
-		// 返回登入的id
-		res.set_content(progress_1 >= 0 ? "2" : "1", "text/plain");
-		// 用户登入标识
-		if (progress_1 >= 0) {
-			progress_2 = 0;
-		}
-		else {
-			progress_1 = 0;
-		}
-	});
-
-
-	/*返回游戏所需的文本文件*/
-	server.Post("/query_text", [&](const httplib::Request& req, httplib::Response& res) {
-		res.set_content(str_text, "text/plain");
-	});
-
-	/*世界状态的同步*/
-	server.Post("/update_1", [&](const httplib::Request& req, httplib::Response& res) {
-		std::lock_guard<std::mutex> lock(g_mutex);
-
-		// 玩家1客户端返回当前用户的打字数，服务端将其保存在本地变量progress_1中
-		progress_1 = std::stoi(req.body);
-		// 在响应体中告知玩家2当前的进度，从而实现世界状态的复制。
-		res.set_content(std::to_string(progress_2), "text/plain");
-
-	});
-
-	server.Post("/update_2", [&](const httplib::Request& req, httplib::Response& res) {
-		std::lock_guard<std::mutex> lock(g_mutex);
-
-		progress_2 = std::stoi(req.body);
-
-		res.set_content(std::to_string(progress_1), "text/plain");
-	});
-
-	/*监听0.0.0.0*/
-	server.listen("0.0.0.0", 25565);
-
-	/*
-	0.0.0.0是一个特殊的IP地址，表示“所有可用的网络接口”。
-	当一个网络服务监听在 0.0.0.0 上时，它可以接受来自任何网络接口上的连接。
-	通常用于服务器配置，以允许服务接受所有网络接口上的连接请求。
-	*/
-
-	return 0;
-} 
-```
-
