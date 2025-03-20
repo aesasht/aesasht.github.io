@@ -378,6 +378,14 @@ private:
 
 ```
 
+## 资源加载
+
+这部分代码没啥好说的，一堆硬编码。
+
+```
+
+```
+
 
 
 # P4 - 游戏摄像机基础实现
@@ -404,10 +412,904 @@ private:
 
 玩家的移动，碰撞和各类机关道具的触发都是以世界坐标系为基本参考系运行的，而画面的渲染参考的是窗口坐标系——**也即渲染与数据分离**
 
-## 资源加载
+运用简单的数学知识不难知道：
 
-这部分代码没啥好说的，一堆硬编码。
+![image-20250319201734875](index.assets/image-20250319201734875.png)
+
+![微信图片_20250319202010](index.assets/微信图片_20250319202010.jpg)
+
+
+
+# P4 - 通用定时器和摄像机特效
+
+## 通用定时器
+
+通用定时器有两种设计思路：继承或回调函数
+
+![image-20250319215641886](index.assets/image-20250319215641886.png)
+
+继承式通用计时器的实现代码：
+
+```c++
+class Timer
+{
+public:
+	Timer() = default;
+	~Timer() = default;
+    void on_update(int delta)
+    {
+		// ...
+        callback();
+	}
+    
+    protected:
+    virtual void callback()
+    {
+		// 执行计时器时间到达逻辑
+    }
+};
+
+// 继承,重写callback方法,在使用时借助多态特性便能执行重写后的定时器逻辑
+class MyTimer : public Timer
+{
+public:
+	MyTimer() = default;
+	~MyTimer() = default;
+protected:
+	void callback() override
+	{
+		// 执行自定义的计时器逻辑
+	}
+};
 
 ```
+
+回调函数式通用计时器的实现代码：
+
+```c++
+class Timer
+{
+public:
+	Timer() = default;
+	~Timer() = default;
+
+	void on_update(int delta)
+	{
+		//... ...
+		callback();
+	}
+	
+    	void set_callback(std::function<void()> callback)
+	{
+		this->callback = callback;
+	}
+    
+protected:
+	std::function<void()> callback;
+	
+};
+
 ```
 
+在使用时只需要向对象中注册自己的回调函 数即可。
+
+从代码设计角度考虑，像通用计时器这种只需要扩展回调方法逻辑，而不需要扩展数据成员的类，我们更倾向使用回调函数的思路而不是使用类继承。
+
+完整的代码如下：
+
+```c++
+class Timer
+{
+public:
+	Timer() = default;
+	~Timer() = default;
+
+	void restart()
+	{
+		pass_time = 0;
+		shotted = false;
+	}
+
+	void set_wait_time(int val)
+	{
+		wait_time = val;
+	}
+
+	void set_one_shot(bool flag)
+	{
+		one_shot = flag;
+	}
+
+	void pause()
+	{
+		paused = true;
+	}
+
+	void resume()
+	{
+		paused = false;
+	}
+
+	void on_update(int delta)
+	{	
+		// 如果处于暂停状态，则返回
+		if (paused) return;
+
+		pass_time += delta;
+		if (pass_time >= wait_time)
+		{
+			if ((!one_shot || (one_shot && !shotted)) && callback)
+				callback();
+			shotted = true;
+			pass_time = 0;
+		}
+	}
+
+	void set_callback(std::function<void()> callback)
+	{
+		this->callback = callback;
+	}
+	 
+protected:
+	int pass_time = 0;					// 已过时间
+	int wait_time = 0;					// 等待时间
+	bool paused = false;				// 是否暂停
+	bool shotted = false;				// 是否触发
+	bool one_shot = false;				// 单次触发
+	std::function<void()> callback;		// 触发回调
+
+};
+
+```
+
+
+
+## 摄像机抖动效果
+
+不难想到,摄像机抖动的特效只需要快速改变Camera对象的坐标就行了.
+
+![image-20250319222058964](index.assets/image-20250319222058964.png)
+
+一种比较简单的设计思路是在以抖动强度为半径的圆内随机设置摄像机的位置.
+
+![image-20250319222353906](index.assets/image-20250319222353906.png)
+
+代码实现:
+
+```c++
+class Camera{
+	Camera()
+	{
+		timer_shake.set_one_shot(true);
+		timer_shake.set_callback([&]()
+			{
+				is_shaking = false;
+				reset();	// 这里的reset（）是Camera里的reset(), 可见
+							// lambda函数体中的作用域与原类中无关
+			}
+		);
+	}
+	~Camera() = default;
+
+	const Vector2& get_position() const
+	{
+		return position;
+	}
+
+	void reset()
+	{
+		position.x = 0;
+		position.y = 0;
+	}
+
+	void shake(float strength, int duration)
+	{
+		is_shaking = true;
+		shaking_strength = strength;
+
+		timer_shake.set_wait_time(duration);
+		timer_shake.restart();
+	}
+
+	void on_update(int delta)
+	{
+		timer_shake.on_update(delta);
+
+		if (is_shaking)
+		{
+			position.x = (-50 + rand() % 100) / 50.0f * shaking_strength;
+			position.y  = (-50 + rand() % 100) / 50.0f * shaking_strength;
+		}
+    }
+private:
+	Vector2 position;				// 摄像机位置
+	Timer timer_shake;				// 摄像机抖动定时器
+	bool is_shaking = false;		// 摄像机是否正在抖动
+	float shaking_strength = 0;		// 摄像机抖动幅度
+}
+```
+
+# P5 - 主菜单界面和角色选择界面搭建
+
+没想到吧 ,游戏的开发才刚刚开始！qaq
+
+为了尽可能地减少全局变量的使用，我们将在`on_draw()`函数里将摄像机对象通过参数传递进来。
+
+所以需要小小重构一下代码，重构过程略。
+
+## 主菜单界面
+
+接下来是主菜单场景的代码：
+
+```c++
+extern Atlas atlas_peashooter_run_right;
+extern IMAGE img_menu_background;
+extern SceneManager scene_manager;
+
+class MenuScene : public Scene
+{
+public:
+	MenuScene() = default;
+	~MenuScene() = default;
+	void on_enter() {
+		//进入主菜单，播放音乐
+		mciSendString(_T("play bgm_menu repeat from 0"), NULL, 0, NULL);
+	}
+	void on_input(const ExMessage& msg) 
+	{ 
+		if (msg.message == WM_KEYUP)
+		{
+			mciSendString(_T("play ui_confirm2 from 0"), NULL, 0, NULL);
+			scene_manager.switch_to(SceneManager::SceneType::Selector);
+		}
+	}		
+	void on_update(int delta) 
+	{ 
+		// 无
+	}						
+	void on_draw(const Camera& camera) 
+	{
+		putimage_alpha(0, 0, &img_menu_background);
+	}							
+
+	void on_exit() 
+	{
+		// 退出主菜单，音乐暂停
+		mciSendString(_T("stop bgm_menu"), NULL, 0, NULL);
+	}	
+private:
+	Animation animation_peashooter_run_right;
+	Camera camera;
+	Timer timer;
+};
+```
+
+编译运行后,一阵音乐响起出现了如下画面:
+
+![image-20250319233244848](index.assets/image-20250319233244848.png)
+
+## 角色选择界面搭建
+
+在角色选择界面中，玩家按下"A"、“D"或者是"→"、"←"，其对应角色会改变。最后按下Enter开始游戏。最后效果如图
+
+![image-20250320132239991](index.assets/image-20250320132239991.png)
+
+资源导入与静态页面绘制——略
+
+设置动画。
+
+既然后续所有的动画渲染都需要先获取摄像机的位置，并且这部分逻辑在所有渲染动画时都需要使用，那么我们现在需要小小地重构一下代码。
+
+在`Animation.h`中引入`camera.h`
+
+```c++
+void on_draw(const Camera& camera, int x, int y) const
+	{
+		putimage_alpha(camera, x, y, atlas->get_image(idx_frame));
+	}
+```
+
+然后在`util.h`里重载`putimage_alpha`
+
+```c++
+inline void putimage_alpha(const Camera& camera, int dst_x, int dst_y, IMAGE* img)
+{
+	int w = img->getwidth();
+	int h = img->getheight();
+	const Vector2& pos_camera = camera.get_position();
+	AlphaBlend(GetImageHDC(GetWorkingImage()), (int)(dst_x - pos_camera.x), (int)(dst_y - pos_camera.y), w, h,
+		GetImageHDC(img), 0, 0, w, h, { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA });
+}
+```
+
+`on_enter`函数的编写:
+
+```c++
+void on_enter()
+{
+	animation_peashooter.set_atlas(&atlas_peashooter_idle_right);
+	animation_sunflower.set_atlas(&atlas_sunflower_idle_right);
+	animation_peashooter.set_interval(100);
+	animation_sunflower.set_interval(100);
+	
+	static const int OFFSET_X = 50;
+
+	pos_img_VS.x = (getwidth() - img_VS.getwidth()) / 2;
+	pos_img_VS.y = (getheight() - img_VS.getheight()) / 2;
+	pos_img_tip.x = (getwidth() - img_selector_tip.getwidth()) / 2;
+	pos_img_tip.y = getheight() - 125;
+	pos_img_1P.x = (getwidth() / 2 - img_1P.getwidth()) / 2 - OFFSET_X;
+	pos_img_1P.y = 35;
+	pos_img_2P.x = getwidth() / 2 + (getwidth() / 2 - img_2P.getwidth()) / 2 + OFFSET_X;
+	pos_img_2P.y = pos_img_1P.y;
+	pos_img_1P_desc.x = (getwidth() / 2 - img_1P_desc.getwidth()) / 2 - OFFSET_X;
+	pos_img_1P_desc.y = getheight() - 150;
+	pos_img_2P_desc.x = getwidth() / 2 + (getwidth() / 2 - img_2P_desc.getwidth()) / 2 + OFFSET_X;
+	pos_img_2P_desc.y = pos_img_1P_desc.y;
+	pos_img_1P_gravestone.x = (getwidth() / 2 - img_gravestone_right.getwidth()) / 2 - OFFSET_X;
+	pos_img_1P_gravestone.y = pos_img_1P.y + img_1P.getheight() + 35;
+	pos_img_2P_gravestone.x = getwidth() / 2 + (getwidth() / 2 - img_gravestone_left.getwidth()) / 2 + OFFSET_X;
+	pos_img_2P_gravestone.y = pos_img_1P_gravestone.y;
+	pos_animation_1P.x = (getwidth() / 2 - atlas_peashooter_idle_right.get_image(0)->getwidth()) / 2 - OFFSET_X;
+	pos_animation_1P.y = pos_img_1P_gravestone.y + 80;
+	pos_animation_2P.x = getwidth() / 2 + (getwidth() / 2 - atlas_peashooter_idle_right.get_image(0)->getwidth()) / 2 + OFFSET_X;
+	pos_animation_2P.y = pos_animation_1P.y;
+	pos_img_1P_name.y = pos_animation_1P.y + 155;
+	pos_img_2P_name.y = pos_img_1P_name.y;
+	pos_1P_selector_btn_left.x = pos_img_1P_gravestone.x - img_1P_selector_btn_idle_left.getwidth();
+	pos_1P_selector_btn_left.y = pos_img_1P_gravestone.y + (img_gravestone_right.getheight() - img_1P_selector_btn_idle_left.getheight()) / 2;
+	pos_1P_selector_btn_right.x = pos_img_1P_gravestone.x + img_gravestone_right.getwidth();
+	pos_1P_selector_btn_right.y = pos_1P_selector_btn_left.y;
+	pos_2P_selector_btn_left.x = pos_img_2P_gravestone.x - img_2P_selector_btn_idle_left.getwidth();
+	pos_2P_selector_btn_left.y = pos_1P_selector_btn_left.y;
+	pos_2P_selector_btn_right.x = pos_img_2P_gravestone.x + img_gravestone_left.getwidth();
+	pos_2P_selector_btn_right.y = pos_1P_selector_btn_left.y;
+}
+```
+
+该函数负责资源的初始化,有一大堆资源加载代码。
+
+`on_input`函数代码编写：
+
+```c++
+void on_input(const ExMessage& msg) 
+{
+    switch (msg.message)
+    {
+        case WM_KEYDOWN:
+            switch (msg.vkcode)
+            {
+                    // 'A'
+                case 0x41:
+                    is_btn_1p_left_down = true;
+                    break;
+                    // 'D'
+                case 0x44:
+                    is_btn_1p_right_down = true;
+                    break;
+                    // '←'
+                case VK_LEFT:
+                    is_btn_2p_left_down = true;
+                    break;
+                    // '→'
+                case VK_RIGHT:
+                    is_btn_2p_right_down = true;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case WM_KEYUP:
+            switch (msg.vkcode)
+            {
+                    // 'A'
+                case 0x41:
+                    is_btn_1p_left_down = false;
+                    player_type_1 = (PlayerType)(((int)PlayerType::Invalid + (int)player_type_1 - 1) 
+                                                 % (int)PlayerType::Invalid);
+                    mciSendString(_T("play ui_switch from 0"), NULL, 0, NULL);
+                    break;
+                    // 'D	'
+                case 0x44:
+                    is_btn_1p_right_down = false;
+                    player_type_1 = (PlayerType)(((int)PlayerType::Invalid + (int)player_type_1 + 1) 
+                                                 % (int)PlayerType::Invalid);
+                    mciSendString(_T("play ui_switch from 0"), NULL, 0, NULL);
+                    break;
+                    // '←'
+                case VK_LEFT:
+                    is_btn_2p_left_down = false;
+                    player_type_2 = (PlayerType)(((int)PlayerType::Invalid + (int)player_type_2 - 1) 
+                                                 % (int)PlayerType::Invalid);
+                    mciSendString(_T("play ui_switch from 0"), NULL, 0, NULL);
+                    break;
+                    // '→'
+                case VK_RIGHT:
+                    is_btn_2p_right_down = false;
+                    player_type_2 = (PlayerType)(((int)PlayerType::Invalid + (int)player_type_2 + 1) 
+                                                 % (int)PlayerType::Invalid);
+                    mciSendString(_T("play ui_switch from 0"), NULL, 0, NULL);
+                    break;
+
+                case  VK_RETURN:
+                    scene_manager.switch_to(SceneManager::SceneType::Game);
+                    mciSendString(_T("play ui_confirm2 from 0"), NULL, 0, NULL);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+}
+```
+
+这个函数负责处理输入。
+
+`on_update`:
+
+```c++
+void on_update(int delta)
+{
+    // 逻辑更新
+    animation_peashooter.on_update(delta);
+    animation_sunflower.on_update(delta);
+
+    selector_background_scorll_offset_x += 5;
+    if (selector_background_scorll_offset_x >= img_peashooter_selector_background_left.getwidth())
+        selector_background_scorll_offset_x = 0;
+
+    switch (player_type_2)
+    {
+        case SelectorScene::PlayerType::Peashooter:
+            img_p1_selector_background = &img_peashooter_selector_background_right;
+            break;
+        case SelectorScene::PlayerType::Sunflower:
+            img_p1_selector_background = &img_sunflower_selector_background_right;
+            break;
+        default:
+            img_p1_selector_background = &img_peashooter_selector_background_right;
+            break;
+    }
+    switch (player_type_1)
+    {
+        case SelectorScene::PlayerType::Peashooter:
+            img_p2_selector_background = &img_peashooter_selector_background_left;
+            break;
+        case SelectorScene::PlayerType::Sunflower:
+            img_p2_selector_background = &img_sunflower_selector_background_left;
+            break;
+        default:
+            break;
+    }
+
+}
+```
+
+`on_draw`
+
+```c++
+void on_draw(const Camera& camera)
+{
+
+    putimage(0, 0, &img_selector_background);	// 绘制背景图
+
+    putimage_alpha(selector_background_scorll_offset_x - img_p1_selector_background->getwidth(), 0, img_p1_selector_background);
+    putimage_alpha(selector_background_scorll_offset_x, 0, 
+                   img_p1_selector_background->getwidth() - selector_background_scorll_offset_x, 0, img_p1_selector_background, 0, 0);
+
+    putimage_alpha(getwidth() - img_p2_selector_background->getwidth(), 0,
+                   img_p2_selector_background->getwidth() - selector_background_scorll_offset_x, 0, img_p2_selector_background, selector_background_scorll_offset_x, 0);
+    putimage_alpha(getwidth() - selector_background_scorll_offset_x, 0, img_p2_selector_background);
+
+
+    putimage_alpha(pos_img_VS.x, pos_img_VS.y, &img_VS); 
+    putimage_alpha(pos_img_1P.x, pos_img_1P.y, &img_1P);
+    putimage_alpha(pos_img_2P.x, pos_img_2P.y, &img_2P);
+    putimage_alpha(pos_img_1P_gravestone.x, pos_img_1P_gravestone.y, &img_gravestone_left);
+    putimage_alpha(pos_img_2P_gravestone.x, pos_img_2P_gravestone.y, &img_gravestone_right); 
+    switch (player_type_1)
+    {
+        case SelectorScene::PlayerType::Peashooter:
+            animation_peashooter.on_draw(camera, pos_animation_1P.x, pos_animation_1P.y);
+            pos_img_1P_name.x = pos_img_1P_gravestone.x + 
+                (img_gravestone_right.getwidth() - textwidth(str_peashooter_name)) / 2;
+            outtextxy_shaded(pos_img_1P_name.x, pos_img_1P_name.y, str_peashooter_name);
+            break;
+        case SelectorScene::PlayerType::Sunflower:
+            animation_sunflower.on_draw(camera,pos_animation_1P.x, pos_animation_1P.y);
+            pos_img_1P_name.x = pos_img_1P_gravestone.x + 
+                (img_gravestone_right.getwidth() - textwidth(str_peashooter_name)) / 2;
+            outtextxy_shaded(pos_img_1P_name.x, pos_img_1P_name.y, str_sunflower_name);
+            break;
+        case SelectorScene::PlayerType::Invalid:
+            break;
+        default:
+            break;
+    }
+
+    switch (player_type_2)
+    {
+        case SelectorScene::PlayerType::Peashooter:
+            animation_peashooter.on_draw(camera, pos_animation_2P.x, pos_animation_2P.y);
+            pos_img_2P_name.x = pos_img_2P_gravestone.x + (img_gravestone_right.getwidth() 
+                                                           - textwidth(str_peashooter_name)) / 2;
+            outtextxy_shaded(pos_img_2P_name.x, pos_img_2P_name.y, str_peashooter_name);
+            break;
+        case SelectorScene::PlayerType::Sunflower:
+            animation_sunflower.on_draw(camera, pos_animation_2P.x, pos_animation_2P.y);
+            pos_img_2P_name.x = pos_img_2P_gravestone.x + (img_gravestone_right.getwidth() 
+                                                           - textwidth(str_peashooter_name)) / 2;
+            outtextxy_shaded(pos_img_2P_name.x, pos_img_2P_name.y, str_sunflower_name);
+            break;
+        case SelectorScene::PlayerType::Invalid:
+            break;
+        default:
+            break;
+    }
+    putimage_alpha(pos_img_1P_desc.x, pos_img_1P_desc.y, &img_1P_desc);
+    putimage_alpha(pos_img_2P_desc.x, pos_img_2P_desc.y, &img_2P_desc); 
+    putimage_alpha(pos_img_tip.x, pos_img_tip.y, &img_selector_tip);
+}
+```
+
+类中私有部分：
+```c++
+private:
+	enum class PlayerType {	
+		Peashooter = 0, 
+		Sunflower, 
+		Invalid
+	};
+private:
+	//场景中各个元素的位子
+	POINT pos_img_VS = { 0 };//VS艺术字图片位置
+	POINT pos_img_tip = { 0 };//提示信息文本图片位置
+	POINT pos_img_1P = { 0 };//1P 文本图片位置
+	POINT pos_img_2P = { 0 };//2P 文本图片位置
+	POINT pos_img_1P_desc = { 0 };//1P 键位描述图片位置
+	POINT pos_img_2P_desc = { 0 };//2P 键位描述图片位置
+	POINT pos_img_1P_name = { 0 };//1P 角色姓名图片位置
+	POINT pos_img_2P_name = { 0 };//2P 角色姓名图片位置
+	POINT pos_animation_1P = { 0 };//1P 动画位置
+	POINT pos_animation_2P = { 0 };//2P 动画位置
+	POINT pos_img_1P_gravestone = { 0 };//1P 墓碑图片位置
+	POINT pos_img_2P_gravestone = { 0 };//2P 墓碑图片位置
+	POINT pos_1P_selector_btn_left = { 0 };//1P 向左切换按钮位置
+	POINT pos_2P_selector_btn_left = { 0 };//2P 向左切换按钮位置
+	POINT pos_1P_selector_btn_right = { 0 };//1P 向右切换按钮位置
+	POINT pos_2P_selector_btn_right = { 0 };//2P 向右切换按钮位置
+
+	//场景动画
+	Animation animation_peashooter;
+	Animation animation_sunflower;
+
+	// 玩家类型对象
+	PlayerType player_type_1 = PlayerType::Peashooter;	// 1p 角色类型
+	PlayerType player_type_2 = PlayerType::Sunflower;	// 2p 角色类型
+
+	// 角色名称
+	LPCTSTR  str_peashooter_name = _T("婉逗射手");
+	LPCTSTR  str_sunflower_name = _T("向龙日葵");
+
+	int selector_background_scorll_offset_x = 0;
+
+	// p1选择哪个， p2的背景就是哪个；p2选择哪个，p1的背景就是哪个
+	IMAGE* img_p1_selector_background = nullptr;
+	IMAGE* img_p2_selector_background = nullptr;
+
+	bool is_btn_1p_left_down = false;	// 1P 向左切换按钮是否按下
+	bool is_btn_1p_right_down = false;	// 1P 向右切换按钮是否按下
+
+	bool is_btn_2p_left_down = false;	// 2P 向左切换按钮是否按下
+	bool is_btn_2p_right_down = false;	// 2P 向右切换按钮是否按下
+
+
+private:
+	void outtextxy_shaded(int x, int y, LPCTSTR str)
+	{
+		settextcolor(RGB(45, 45, 45));
+		outtextxy(x + 3, y + 3, str);
+		settextcolor(RGB(255, 255, 255));
+		outtextxy(x, y, str);
+	}
+
+```
+
+# P8 - 游戏局内场景搭建和物理模拟基础
+
+> 当我们在游戏中引入物理引擎的时候，牛顿就成了整个游戏世界的导演
+
+现在我们将着手编写本项目中最为核心的部分——局内场景逻辑。
+
+ 在游戏局内场景中，我们会围绕玩家角色的逻辑为核心，简单地实现**物理模拟，粒子系统，技能系统**等在众多游戏中十分常见的功能。
+
+### 游戏局内场景搭建
+
+```c++
+// game_scene.h
+
+
+/*添加*/
+extern IMAGE img_sky;
+extern IMAGE img_hills;
+extern IMAGE img_platform_large;
+extern IMAGE img_platform_small;
+
+extern Camera main_camera;
+extern SceneManager scene_manager;
+
+class GameScene : public Scene
+{ 
+/*添加*/
+private:
+	POINT pos_img_sky = { 0 };			// 天空背景图位置
+	POINT pos_img_hills = { 0 };		// 山脉背景图位置
+}
+```
+
+在完成上述代码后，我们就完成了第一步的资源引入工作，接下来就是添加背景图片到游戏局内
+
+```c++
+class GameScene : public Scene
+{
+	/*修改*/
+	void on_enter() {
+		// 为了保障摄像机抖动不出现黑边，图片会比窗口尺寸大,这里的代码实现了居中显示功能
+		pos_img_sky.x = (getwidth() - img_sky.getwidth()) / 2;
+		pos_img_sky.y = (getheight() - img_sky.getheight()) / 2;
+
+		pos_img_hills.x = (getwidth() - img_hills.getwidth()) / 2;
+		pos_img_hills.y = (getheight() - img_hills.getheight()) / 2;
+	}
+}
+```
+
+```c++
+/*引入*/
+#include "util.h"  
+class GameScene : public Scene
+{
+	/*修改*/
+	void on_draw(const Camera& camera)
+	{
+        // 背景贴图~
+		putimage_alpha(camera, pos_img_sky.x, pos_img_sky.y, &img_sky);
+		putimage_alpha(camera, pos_img_hills.x, pos_img_hills.y, &img_hills);
+	}
+}
+```
+
+打开游戏，测试：
+
+![image-20250320134156919](index.assets/image-20250320134156919.png)
+
+### 物理模拟基础
+
+在2D横板游戏中最为常见的，那必然是**重力**——在一个没有碰撞的虚空游戏世界中，玩家会受重力影响不断地向下坠落——直到碰到**”地面“**而摔死。
+
+![image-20250320134609371](index.assets/image-20250320134609371.png)
+
+这里的“地面”，是个抽象的概念。玩家不可能无限制地掉落下去，故一般游戏中都会有地面的存在。
+
+拿MC举例，地面可以是基岩，可以是箱子，也可以是虚空中的死亡线——即便是创造模式也会摔死的死亡线。
+
+在《植物明星大乱斗》中，我们只考虑最简单的模式——玩家落在了“平台”上。
+
+![image-20250320134941548](index.assets/image-20250320134941548.png)
+
+我们将”平台“设计成类：
+
+```c++
+/*新建platform.h*/
+#ifndef _PLATFORM_H_
+#define _PLATFORM_H_
+
+#include <graphics.h>
+#include "camera.h"
+
+class Platform
+{
+public:
+	Platform() = default;
+	~Platform() = default;
+};
+
+#endif // !_PLATFORM_H_
+```
+
+考虑平台的形状，借鉴很多2d横板跳跃游戏我们不难发现，玩家只会停留在平台的上层，因此我们可以简化平台哦的形状为一条线段：
+
+```c++
+class Platform
+{
+public:
+	struct CollisionShape
+	{
+		float y;			// 平台的竖直坐标位置
+		float left, right;	// 水平方向上线段的起点和终点坐标
+	};
+public:
+	CollisionShape shape;
+}
+```
+
+提供绘图逻辑:
+
+```c++
+/*添加*/
+#include <graphics.h>
+#include "camera.h"
+#include "util.h"
+class Platform
+{
+public:
+	IMAGE* img = nullptr;
+	POINT render_position = { 0 };
+public:
+    void on_draw(const Camera& camera) const
+    {
+        putimage_alpha(camera, render_position.x, render_position.y, img);
+    }
+};
+```
+
+平台的作品并不是一条线，而我们的平台类内的碰撞检测线是一条线。在一般情况下检测线的位置位于平台图片内部稍微偏上一点的地方。
+
+![image-20250320141237236](index.assets/image-20250320141237236.png)
+
+接着，我们在`mian.cpp`和`game_scene.h`内添加平台对象的全局数组:
+
+```c++
+extern std::vector<Platform> platform_list;
+```
+
+接下来我们来初始化游戏场景的平台部分:
+
+```c++
+// game_scene.h
+class GameScene : public Scene
+{
+	void on_enter() {
+		// 为了保障摄像机抖动不出现黑边，图片会比窗口尺寸大,这里的代码实现了居中显示功能
+		pos_img_sky.x = (getwidth() - img_sky.getwidth()) / 2;
+		pos_img_sky.y = (getheight() - img_sky.getheight()) / 2;
+
+		pos_img_hills.x = (getwidth() - img_hills.getwidth()) / 2;
+		pos_img_hills.y = (getheight() - img_hills.getheight()) / 2;
+        
+        /*添加*/
+        platform_list.resize(4);
+
+		Platform& large_platform = platform_list[0];
+		large_platform.img = &img_platform_large;
+		large_platform.render_position = { 122, 455 };
+		large_platform.shape.left = (float)large_platform.render_position.x + 30;
+		large_platform.shape.right = (float)large_platform.render_position.x + img_platform_large.getwidth() - 30;
+		large_platform.shape.y = (float)large_platform.render_position.y + 60;
+
+		Platform& small_platform_1 = platform_list[1];
+		small_platform_1.img = &img_platform_small;
+		small_platform_1.render_position = { 175, 360 };
+		small_platform_1.shape = {
+			(float)small_platform_1.render_position.x + 40,
+			(float)small_platform_1.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_1.render_position.y + img_platform_small.getheight() / 2
+		};
+
+		Platform& small_platform_2 = platform_list[2];
+		small_platform_2.img = &img_platform_small;
+		small_platform_2.render_position = { 855, 360 };
+		small_platform_2.shape = {
+			(float)small_platform_2.render_position.x + 40,
+			(float)small_platform_2.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_2.render_position.y + img_platform_small.getheight() / 2
+		};
+
+		Platform& small_platform_3 = platform_list[3];
+		small_platform_3.img = &img_platform_small;
+		small_platform_3.render_position = { 515, 225 };
+		small_platform_3.shape = {
+			(float)small_platform_3.render_position.x + 40,
+			(float)small_platform_3.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_3.render_position.y + img_platform_small.getheight() / 2
+		};
+        
+	}
+}
+```
+
+最后是绘制平台	
+
+```c++
+class Platform
+{
+    public:
+    void on_draw(const Camera& camera)
+    {
+        putimage_alpha(camera, pos_img_sky.x, pos_img_sky.y, &img_sky);
+        putimage_alpha(camera, pos_img_hills.x, pos_img_hills.y, &img_hills);
+
+        // 绘制平台
+        for (const Platform& platform : platform_list)
+        {
+            platform.on_draw(camera);
+        }
+    }
+}
+```
+
+为了方便调试,我们在程序中添加一些碰撞检测线, 先封装一个画线算法:
+```c++
+// util.h
+inline void line(const Camera& camera, int x1, int y1, int x2, int y2, )
+{
+	const Vector2& pos_camera = camera.get_position();
+	line((int)(x1 - pos_camera.x), (int)(y1 - pos_camera.y), (int)(x2 - pos_camera.x), (int)(y2 - pos_camera.y));
+}
+```
+
+在`main.cpp`里定义一个全局变量
+
+```c++
+// main.cpp
+bool is_debug;	
+```
+
+在`platform.h`内引入它外部变量:
+
+```c++
+// platform.h
+extern bool is_debug;
+```
+
+修改绘图逻辑
+
+```c++
+// platform.h
+class Platform
+{
+    public:
+    void on_draw(const Camera& camera)
+    {
+        putimage_alpha(camera, pos_img_sky.x, pos_img_sky.y, &img_sky);
+        putimage_alpha(camera, pos_img_hills.x, pos_img_hills.y, &img_hills);
+
+        // 绘制平台
+        for (const Platform& platform : platform_list)
+        {
+            platform.on_draw(camera);
+        }
+        /*添加*/
+		if (is_debug)
+		{
+			setlinecolor(RGB(255, 0, 0));
+			line(camera, (int)shape.left, (int)shape.y, (int)shape.right, (int)shape.y);
+			settextcolor(RGB(255, 0, 0));
+			outtextxy(15, 15, _T("已开启调试模式，按 'Q' 键关闭"));
+		}
+    }
+}
+```
+
+修改处理输入逻辑:
+
+```c++
+class GameScene : public Scene
+{
+    public:
+	void on_input(const ExMessage& msg) { 
+		switch (msg.message)
+		{
+		case WM_KEYUP:
+			// 'Q'
+			if (msg.vkcode == 0x51)
+				is_debug = !is_debug;
+		}
+		
+    }
+}
+```
+
+# P9 - 玩家类设计和角色移动基础
