@@ -1313,3 +1313,349 @@ class GameScene : public Scene
 ```
 
 # P9 - 玩家类设计和角色移动基础
+
+玩家类为基类，之后的wdss和lrk都要继承这个类
+
+```c++
+// player.h
+class Player
+{
+public:
+	Player() = default;
+	~Player() = default;
+
+	virtual void on_update(int delta)			{ }
+	virtual void on_draw(const Camera& camera)	{ }
+	virtual void on_input(const ExMessage& msg) { }
+private:
+
+};
+```
+
+```c++
+// peashooter_player.h
+class PeashooterPlayer : public Player
+{
+public:
+	PeashooterPlayer() = default;
+	~PeashooterPlayer() = default;
+private:
+
+};
+```
+
+```c++
+// sunflower_player.h
+class SunflowerPlayer : public Player
+{
+public:
+	SunflowerPlayer() = default;
+	~SunflowerPlayer() = default;
+private:
+};
+
+
+```
+
+这是基本设计。
+
+接着我们考虑如何实例化这些类，根据玩法设计，我们在玩家角色选择界面会选择两个玩家各自的游戏角色，之后在局内场景里，玩家操控选定的角色进行 战斗。由此可见，我们需要全局变量。
+
+```c++
+// main.cpp
+/*添加*/
+Player* player_1 = nullptr;
+Player* player_2 = nullptr;
+```
+
+随后，我们来到`SelectorScene`场景类中，重写`on_exit`方法:
+
+```c++
+// selector_scene.h
+/*添加*/
+Player* player_1 = nullptr;
+Player* player_2 = nullptr;
+class SelectorScene : public Scene
+{
+	void on_exit()
+	{
+		// 选择场景退
+		switch (player_type_1)
+		{s
+		case PlayerType::Peashooter:
+			player_1 = new PeashooterPlayer();
+			break;
+		case PlayerType::Sunflower:
+			player_1 = new SunflowerPlayer();
+			break;
+		}
+		switch (player_type_2)
+		{
+		case PlayerType::Peashooter:
+			player_2 = new PeashooterPlayer();
+			break;
+		case PlayerType::Sunflower:
+			player_2 = new SunflowerPlayer();
+			break;
+		}
+}
+```
+
+接下来我们实现角色的移动功能。
+
+由于过于复杂，之后仅讨论重点技术。
+
+**玩家方向的判断**:
+
+```c++
+// player.h
+virtual void on_update(int delta)			
+{
+	// 判断玩家当前移动方向
+	int direction = is_right_key_down - is_left_key_down;
+
+	if (direction != 0)
+	{
+		is_facing_right = direction > 0;
+	}
+	else
+	{
+		current_animation = is_facing_right ? &animation_idle_right : &animation_idle_left;
+	}
+
+	current_animation->on_update(delta);
+}
+```
+
+# P10 - 平台单向碰撞检测和重力模拟
+
+修改角色位置坐标达到移动效果：
+
+```c++
+// player.h
+virtual void on_update(int delta)			
+{
+    // 判断玩家当前移动方向
+    int direction = is_right_key_down - is_left_key_down;
+
+    if (direction != 0)
+    {
+        is_facing_right = direction > 0;
+        current_animation = is_facing_right ? &animation_idle_right : &animation_idle_left;
+        float distance = direction * run_velocity * delta;
+        on_run(distance);
+    }
+    else
+    {
+        current_animation = is_facing_right ? &animation_idle_right : &animation_idle_left;
+    }
+
+    current_animation->on_update(delta);
+}
+virtual void on_run(float distance)
+{
+    position = {
+        position.x += distance,
+        position.y += distance
+    };
+}
+```
+
+**平台跳跃碰撞检测.**
+
+首先判断x方向上玩家是否与平台碰撞
+
+其次在判断y方向上的玩家是否与平台碰撞.这里需要注意的是,**只有在上一帧里,玩家的位置高于平台而这一帧中玩家的竖直方向位置与平台发生碰撞才可判断成功.**
+
+```c++
+void move_and_collide(int delta)
+{
+	velocity.y += gravity * delta;
+	position += velocity * (float)delta;
+
+	// 玩家只有在下坠时才会和平台进行碰撞
+	if (velocity.y > 0)
+	{
+		for (const Platform& platform : platform_list)
+		{
+			const Platform::CollisionShape& shape = platform.shape;
+			bool is_collide_x = (
+				max(position.x + size.x, shape.right) - min(position.x, shape.left) <=
+				size.x + (shape.right - shape.left)
+			);
+			bool is_collide_y = (shape.y >= position.y && shape.y <= position.y + size.y);
+			if (is_collide_x && is_collide_y)
+			{	
+				// 上一帧竖直方向的位置
+				float delta_pos_y = velocity.y * delta;
+				float last_tick_foot_pos_y = position.y + size.y - delta_pos_y;
+				// 这一帧玩家脚底坐标穿过了平台而上一帧玩家脚底位置在平台之上
+				if (last_tick_foot_pos_y <= shape.y)
+				{
+					position.y = shape.y - size.y;
+					velocity.y = 0;
+
+					break;
+				}
+			}
+		}
+	}
+}
+```
+
+玩家跳跃的实现,令人神奇的事, 玩家跳跃的实现非常简单(当然,3D里还是挺难实现的),在按键按下的那一刻,为角色添加向上的速度即可。
+
+```c++
+virtual void on_jump()
+	{
+	if (velocity.y != 0)
+		return;
+	velocity.y += jump_velocity;
+}
+```
+
+# P11 - 角色技能设计和子弹基类实现
+
+在本游戏项目中，无论何种玩家角色，他们的子弹本质上都是一种抛射物。从游戏开发者的角度来讲，我们就可以对场景中所有的抛射物进行大一统。它们无非只是动画贴图和范围伤害等数值上的差异罢了
+
+![image-20250321132902412](index.assets/image-20250321132902412.png)
+
+上图分别是游戏里用到的子弹种类，分别是豌豆子弹，日光炸弹和超大型的日光炸弹。
+
+我们定义一个Bullet基类，具体种类的子弹将会继承该基类，并实现自己的更新和渲染逻辑。
+
+```c++
+// bullet.h
+class Bullet
+{
+public:
+    Bullet() = default;
+    ~Bullet() = default;
+private:
+    Vector2 size;			// 子弹尺寸
+    Vector2 position;		// 子弹位置
+    Vector2 velocity;		// 子弹速度
+    int damage = 10;		// 子弹伤害
+};
+
+```
+
+子弹在碰撞发生后的消失逻辑该如何编写？
+
+![image-20250321133343750](index.assets/image-20250321133343750.png)
+
+这和之前讨论过的玩家角色死亡动画很像。在子弹碰到角色后，就应该被立即设置为无效的状态——从而防止后续帧更新时与敌人发生多次碰撞。但是我们需要播放子弹的炸裂效果，故子弹不能马上从场景中删除。
+
+那么，从上述讨论中，我们可以抽象出场景里每一个子弹对象都有着三个阶段—
+
+![image-20250321133647782](index.assets/image-20250321133647782.png)
+
+* 正常状态下，在每一帧我们都会检查子弹是否与玩家碰撞或者飞出屏幕外，子弹碰撞后进入无效状态
+* 无效状态下，我们不再对子弹的碰撞进行检测，同时播放子弹的销毁动画。动画播放结束后，进入销毁
+* 在可以被删除状态下，从而在场景更新时被移除掉
+
+```c++
+	bool valid = true;			// 子弹是否有效
+	bool can_remove = false;	// 是否可以被移除
+```
+
+子弹碰撞后都会有后续效果（例如增加MP值，扣血等），故可以设置回调函数：
+
+```c++
+std::function<void()> callback;	// 子弹碰撞回调函数
+```
+
+同时，子弹是有碰撞目标的，故我们需要设置一个变量标记子弹的碰撞目标
+
+```c++
+PlayerID target_id = PlayerID::P1;
+```
+
+接下来是一些方法：
+
+```c++
+void set_damage(int damage) {
+	this->damage = damage;
+}
+
+int get_damage() const
+{
+	return this->damage;
+}
+
+const Vector2& get_size() const
+{
+	return size;
+}
+
+void set_velocity(float x, float y)
+{
+	velocity = { x, y };
+}
+
+void set_collide_target(PlayerID target)
+{
+	target_id = target;
+}
+
+PlayerID get_collide_target() const
+{
+	return target_id;
+}
+
+void set_callback(std::function<void()> callback)
+{
+	this->callback = callback;
+}
+
+void set_vaild(bool flag)
+{
+	this->valid = flag;
+}
+
+bool get_vaild() const
+{
+	return this->valid;
+}
+
+bool check_can_remove() const
+{
+	return this->can_remove;
+}
+
+virtual void on_collide()
+{
+	if (callback)
+		callback();
+}
+
+virtual bool check_collision(const Vector2& position, const Vector2& size)
+{
+	return this->position.x + this->size.x / 2 >= position.x
+		&& this->position.x + this->size.x / 2 <= position.x + size.x
+		&& this->position.y + this->size.y / 2 >= position.y
+		&& this->position.y + this->size.y / 2 <= position.y + size.y;
+}
+
+virtual void on_update(int delta)
+{ }
+
+virtual void on_draw(const Camera& camera) const { }	
+
+```
+
+接下来我们还需要一个检测子弹是否飞出窗户外的函数
+
+```c++
+protected:
+bool check_if_exceeds_screen()
+{
+	return (position.x + size.x <= 0 || position.x >= getwidth() || position.y + size.y <= 0 || position.y >= getheight());
+}
+```
+
+# P12 - 玩家子弹派生类详细实现
+
+略
+
+# P13 - 玩家子弹发射和角色技能实现
