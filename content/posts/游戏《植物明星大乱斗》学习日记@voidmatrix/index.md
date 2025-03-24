@@ -1656,6 +1656,542 @@ bool check_if_exceeds_screen()
 
 # P12 - 玩家子弹派生类详细实现
 
-略
+```c++
+// pea_bullet.h
+#ifndef _GAME_SCENE_H_
+#define _GAME_SCENE_H_
+
+#include "scene.h"
+#include <iostream>
+#include "platform.h"
+#include <vector>
+#include "player.h"
+extern IMAGE img_sky;
+extern IMAGE img_hills;
+extern IMAGE img_platform_large;
+extern IMAGE img_platform_small;
+
+extern bool is_debug;
+
+extern Camera main_camera;
+extern SceneManager scene_manager;
+extern std::vector<Platform> platform_list;
+
+extern Player* player_1;
+extern Player* player_2;
+
+
+class GameScene : public Scene
+{
+public:
+	GameScene() = default;
+	~GameScene() = default;
+	void on_enter() {
+
+		player_1->set_position(200, 50);
+		player_2->set_position(975, 50);
+
+		// 为了保障摄像机抖动不出现黑边，图片会比窗口尺寸大,这里的代码实现了居中显示功能
+		pos_img_sky.x = (getwidth() - img_sky.getwidth()) / 2;
+		pos_img_sky.y = (getheight() - img_sky.getheight()) / 2;
+
+		pos_img_hills.x = (getwidth() - img_hills.getwidth()) / 2;
+		pos_img_hills.y = (getheight() - img_hills.getheight()) / 2;
+
+		platform_list.resize(4);
+
+		Platform& large_platform = platform_list[0];
+		large_platform.img = &img_platform_large;
+		large_platform.render_position = { 122, 455 };
+		large_platform.shape.left = (float)large_platform.render_position.x + 30;
+		large_platform.shape.right = (float)large_platform.render_position.x + img_platform_large.getwidth() - 30;
+		large_platform.shape.y = (float)large_platform.render_position.y + 60;
+
+		Platform& small_platform_1 = platform_list[1];
+		small_platform_1.img = &img_platform_small;
+		small_platform_1.render_position = { 175, 360 };
+		small_platform_1.shape = {
+			(float)small_platform_1.render_position.x + 40,
+			(float)small_platform_1.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_1.render_position.y + img_platform_small.getheight() / 2
+		};
+
+		Platform& small_platform_2 = platform_list[2];
+		small_platform_2.img = &img_platform_small;
+		small_platform_2.render_position = { 855, 360 };
+		small_platform_2.shape = {
+			(float)small_platform_2.render_position.x + 40,
+			(float)small_platform_2.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_2.render_position.y + img_platform_small.getheight() / 2
+		};
+
+		Platform& small_platform_3 = platform_list[3];
+		small_platform_3.img = &img_platform_small;
+		small_platform_3.render_position = { 515, 225 };
+		small_platform_3.shape = {
+			(float)small_platform_3.render_position.x + 40,
+			(float)small_platform_3.render_position.x + img_platform_small.getwidth() - 40,
+			(float)small_platform_3.render_position.y + img_platform_small.getheight() / 2
+		};
+
+	}
+	void on_input(const ExMessage& msg) { 
+
+		player_1->on_input(msg);
+		player_2->on_input(msg);
+
+		switch (msg.message)
+		{
+		case WM_KEYUP:
+			// 'Q'
+			if (msg.vkcode == 0x51)
+				is_debug = !is_debug;
+		}
+		
+	}
+	void on_update(int delta)
+	{
+		player_1->on_update(delta);
+		player_2->on_update(delta);
+	}
+	void on_draw(const Camera& camera)
+	{
+		putimage_alpha(camera, pos_img_sky.x, pos_img_sky.y, &img_sky);
+		putimage_alpha(camera, pos_img_hills.x, pos_img_hills.y, &img_hills);
+
+		// 绘制平台
+		for (const Platform& platform : platform_list)
+		{
+			platform.on_draw(camera);
+		}
+
+		if(is_debug)
+		{
+			settextcolor(RGB(255, 0, 0));
+			outtextxy(15, 15, _T("已开启调试模式，按 'Q' 键关闭"));
+		}
+
+		player_1->on_draw(camera);
+		player_2->on_draw(camera);
+
+	}
+	void on_exit()
+	{
+
+	}
+private:
+	POINT pos_img_sky = { 0 };			// 天空背景图位置
+	POINT pos_img_hills = { 0 };		// 山脉背景图位置
+};
+#endif // !_GAME_SCENE_H_
+
+```
+
+```c++
+// sun_bullet.h
+#ifndef _SUN_BULLET_H_
+#define _SUN_BULLET_H_
+#include "bullet.h"
+#include "animation.h"
+#include "util.h"
+#include <graphics.h>
+
+extern Atlas atlas_sun; // 日光动画图集
+extern Atlas atlas_sun_explode; // 日光爆炸动画图集
+extern Camera main_camera;
+
+class SunBullet : public Bullet
+{
+public:
+	SunBullet()
+	{
+		size = { 96, 96 };
+		damage = 30;
+
+		animation_sun.set_atlas(&atlas_sun);
+		animation_sun.set_interval(50);
+		animation_sun.set_loop(true);
+		
+		animation_sun_explode.set_atlas(&atlas_sun_explode);
+		animation_sun_explode.set_interval(50);
+		animation_sun_explode.set_loop(false);
+		animation_sun_explode.set_callback([&]() { can_remove = true; });
+
+		IMAGE* frame_sun = animation_sun.get_frame();
+		IMAGE* frame_explode = animation_sun_explode.get_frame();
+
+		explode_render_offset = {
+			(frame_sun->getwidth() - frame_explode->getwidth()) / 2.0f,
+			(frame_sun->getheight() - frame_explode->getheight()) / 2.0f,
+		};
+	}
+	~SunBullet() = default;
+
+	void on_collide()
+	{
+		Bullet::on_collide();
+
+		// 播放太阳花子弹爆炸音乐
+		mciSendString(_T("play sun_explode form 0"), NULL, 0, NULL);
+		// 爆炸时的屏幕抖动效果
+		main_camera.shake(5, 250);
+	}
+
+	void on_update(int delta)
+	{
+		if (valid)
+		{
+			velocity.y += gravity * delta;
+			position += velocity * (float)delta;
+		}
+
+		if (valid)
+		{
+			animation_sun.on_update(delta);
+		}
+		else
+		{
+			animation_sun_explode.on_update(delta);
+		}
+
+		if (check_if_exceeds_screen())
+		{
+			can_remove = true;
+		}
+
+	}
+
+	void on_draw(const Camera& camera) const
+	{
+		if (valid)
+			animation_sun.on_draw(camera, (int)position.x, (int)position.y);
+		else
+			animation_sun_explode.on_draw(
+				camera, 
+				(int)position.x + explode_render_offset.x, 
+				(int)position.y + explode_render_offset.y); 
+	}
+
+private:
+	const float gravity = 1e-3f;
+
+private:
+	Animation animation_sun;			// 太阳动画
+	Animation animation_sun_explode;	// 日光爆炸
+	Vector2 explode_render_offset;		// 爆炸动画渲染偏移
+
+};
+
+
+#endif // !_SUN_BULLET_H_
+
+```
+
+```c++
+// sun_bullet_ex.h
+#ifndef _SUN_BULLET_EX_H_
+#define _SUN_BULLET_EX_H_
+#include "bullet.h"
+#include "animation.h"
+#include "util.h"
+#include <graphics.h>
+
+
+extern Atlas atlas_sun_ex; // 特殊日光动画图集
+extern Atlas atlas_sun_ex_explode; // 特殊日光爆炸动画图集
+
+extern Camera main_camera;
+
+class SunBulletEx : public Bullet
+{
+public:
+	SunBulletEx()
+	{
+		size = { 288, 288 };
+		damage = 50;
+
+		animation_idle.set_atlas(&atlas_sun_ex);
+		animation_idle.set_interval(50);
+		animation_idle.set_loop(true);
+
+		animation_explode.set_atlas(&atlas_sun_ex_explode);
+		animation_explode.set_interval(50);
+		animation_explode.set_loop(false);
+		animation_explode.set_callback([&]() { can_remove = true; });
+
+		IMAGE* frame_sun = animation_idle.get_frame();
+		IMAGE* frame_explode = animation_explode.get_frame();
+
+		explode_render_offset = {
+			(frame_sun->getwidth() - frame_explode->getwidth()) / 2.0f,
+			(frame_sun->getheight() - frame_explode->getheight()) / 2.0f,
+		};
+	}
+	~SunBulletEx() = default;
+
+	void on_collide()
+	{
+		Bullet::on_collide();
+
+		// 播放太阳花子弹爆炸音乐
+		mciSendString(_T("play sun_explode_ex form 0"), NULL, 0, NULL);
+		// 爆炸时的屏幕抖动效果
+		main_camera.shake(20, 400);
+	}
+
+	void on_update(int delta)
+	{
+		if (valid)
+		{
+			position += velocity * (float)delta;
+		}
+
+		if (valid)
+		{
+			animation_idle.on_update(delta);
+		}
+		else
+		{
+			animation_explode.on_update(delta);
+		}
+
+		if (check_if_exceeds_screen())
+		{
+			can_remove = true;
+		}
+
+	}
+
+	void on_draw(const Camera& camera) const
+	{
+		if (valid)
+			animation_idle.on_draw(camera, (int)position.x, (int)position.y);
+		else
+		{
+			animation_explode.on_draw(
+				camera,
+				(int)(position.x + explode_render_offset.x),
+				(int)(position.x + explode_render_offset.y)
+			);
+		}
+	}
+
+
+
+	bool check_collision(const Vector2& position, const Vector2& size)
+	{
+		bool is_collide_x =
+			(
+				max(this->position.x + this->size.x, position.x + size.x)
+				- min(this->position.x, position.x) <= this->size.x + size.x
+			);
+		bool is_collide_y =
+			(
+				max(this->position.y + this->size.y, position.y + size.y)
+				- min(this->position.y + position.y, position.y) <= this->size.y + size.y 
+				);
+		return is_collide_x && is_collide_y;
+	}
+
+
+
+private:
+	const float gravity = 1e-3f;
+
+private:
+	Animation animation_idle;		// 巨大日光炸弹默认动画
+	Animation animation_explode;	// 巨大日光炸弹爆炸动画
+	Vector2 explode_render_offset;	// 爆炸动画渲染偏移
+};
+
+#endif // !_SUN_BULLET_EX_H_
+
+```
 
 # P13 - 玩家子弹发射和角色技能实现
+
+​      在`P12`中, 我们完成了子弹逻辑的开发，在这一小节里，我们要着手实现”枪“的逻辑。
+
+攻击是有时间间隔的，故我们定义了三个变量来实现攻击间隔。
+
+```c++
+class Player{
+	// 普通攻击
+	virtual void on_attack() { }
+	// 技能攻击
+	virtual void on_attack_ex() { }
+    
+protected:
+    int attack_cd = 500;			// 普通攻击冷却时间
+	bool can_attack_cd = true;		// 是否可以释放普通攻击
+	Timer timer_attack_cd;			// 普通攻击冷却定时器
+}
+```
+
+之后，开发豌豆射手的子弹发射逻辑：
+
+```c++
+public:
+	void on_attack()
+	{
+		spawn_pea_bullet(speed_pea);
+		// 播放子弹发出音乐
+		switch (rand() % 2)
+		{
+		case 0:
+			mciSendString(_T("play pea_shoot_1 from 0"), NULL, 0, NULL);
+			break;
+		case 1:
+			mciSendString(_T("play pea_shoot_2 from 0"), NULL, 0, NULL);
+			break;
+		}
+	}
+
+
+private:
+    void spawn_pea_bullet(float speed)
+    {
+        Bullet* bullet = new PeaBullet();
+
+        Vector2 bullet_position;
+        Vector2 bullet_velocity;
+        // 计算子弹发射位置
+        const Vector2& bullet_size = bullet->get_size();
+        bullet_position.x = is_facing_right
+            ? position.x + size.x - bullet_size.x / 2
+            : position.x - bullet_size.x / 2;
+        bullet_position.y = position.y;
+        bullet_velocity = {
+            is_facing_right ? speed : -speed,
+            0
+        };
+
+        bullet->set_position(bullet_position.x, bullet_position.y);
+        bullet->set_velocity(bullet_velocity.x, bullet_velocity.y);
+
+        bullet->set_collide_target(id == PlayerID::P1 ? PlayerID::P2 : PlayerID::P1);
+        bullet->set_callback([&]() { mp += 25; });
+
+        bullet_list.push_back(bullet);
+    }
+```
+
+可以类比着开发其他子弹
+
+以豌豆射手的特殊攻击技能为例。
+
+首先，我们希望特殊攻击技能期间，角色不会移动
+
+```c++
+class Player{
+	virtual void on_run(float distance)
+	{
+		if (is_attackiong_ex)
+			return;
+
+		position = {
+			position.x += distance,
+			position.y
+		};
+	}
+
+	virtual void on_jump()
+	{
+		if (is_attackiong_ex)
+			return;
+
+		if (velocity.y != 0)
+			return;
+		velocity.y += jump_velocity;
+	}
+protected:
+	bool is_attackiong_ex = false;	// 当前是否正在播放特殊攻击
+}	
+
+```
+
+接着和豌豆射手的普通技能一样的实现思路。
+
+# P14 - 无敌帧与玩家状态栏实现
+
+为了提升游戏游玩体验，我们在角色受击后提供无敌帧，极其特效实现
+
+无敌帧的实现是靠定时器，在角色受到攻击后，定时器倒计时，倒计时内角色不会受到任何伤害。
+
+特效是白色闪闪。
+
+玩家状态栏的实现——略
+
+# P15 - 粒子系统和角色特效动画实现
+
+粒子系统是用于模拟动态视觉效果（如火焰、烟雾、爆炸等）的核心技术，通过大量微小粒子（点、面片或3D模型）的组合运动实现复杂特效。
+
+> #### **1. 核心组成**
+>
+> - **发射器（Emitter）**
+>   控制粒子的生成位置、方向、速率及形状（点、圆形、球形、网格等）。
+> - **粒子属性**
+>   每个粒子独立包含**位置、速度、加速度、生命周期、大小、颜色、透明度**等动态参数。
+> - **渲染器**
+>   决定粒子如何显示，如使用精灵图（2D）、3D模型或自定义材质，支持混合模式（如叠加、透明）。
+>
+> ------
+>
+> #### **2. 关键参数**
+>
+> - **发射速率**：每秒生成的粒子数量。
+> - **生命周期**：粒子从生成到消失的时间。
+> - **运动控制**：初始速度、加速度、重力影响。
+> - **视觉变化**：粒子大小、颜色、透明度的动态插值（如火焰从红渐变到透明）。
+> - **形状参数**：发射器形状（点、线、面）影响粒子的扩散方式。
+>
+> ------
+>
+> #### **3. 实现原理**
+>
+> 1. **生成阶段**
+>    发射器按设定速率生成粒子，赋予初始属性（位置、速度等）。
+> 2. **更新阶段**
+>    每帧更新粒子状态：位置 += 速度 × 时间，速度 += 加速度，生命周期递减至销毁。
+> 3. **渲染阶段**
+>    根据粒子属性（位置、大小、颜色）绘制到屏幕，通常按深度排序避免渲染错误。
+>
+> ------
+>
+> #### **4. 常见应用场景**
+>
+> - **自然现象**：雨雪、火焰、水流。
+> - **技能特效**：魔法光芒、爆炸冲击波。
+> - **交互反馈**：击中时的火花、UI点击特效。
+> - **环境细节**：尘埃、雾气、动态光影。
+
+首先定义粒子类：
+
+```c++
+#ifndef _PARTICLE_H_
+#define _PARTICLE_H_
+
+class Particle
+{
+public:
+	Particle() = default;
+    
+	~Particle() = default;
+private:
+	int timer = 0;			// 粒子动画播放定时器
+	int lifespan = 0;		// 单帧粒子动画持续时长
+	int idx_frame = 0;		// 当前正在播放的动画帧
+    Vector2 position;		// 粒子的世界坐标位置
+    bool valid = true;		// 粒子对象是否有效
+    Atlas* atlas = nullptr;	// 粒子动画所使用的图集
+};
+
+#endif // !_PARTICLE_H_
+
+```
+
+不难发现，这跟动画类的定义很像（定时器，动画帧索引）。事实上，粒子对象可以说是一类特化的动画对象。
+
+![image-20250323104137849](index.assets/image-20250323104137849.png)
+
+粒子动画与其他动画（如角色动画，子弹动画等）不同的是，粒子在发射后，它们在世界坐标的位置便固定了下来，不会随着游戏更新而移动，在播放完粒子动画后，它们的寿命便终止了。
